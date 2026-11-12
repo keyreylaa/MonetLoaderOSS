@@ -304,6 +304,12 @@ void scripting::ScriptCode::operator<<(unsigned int* p)
 
 void game::scripting::InitSafeProcessing()
 {
+  static bool installed = false;
+  if (installed) {
+    return; // Installing it twice would save our own handler as the "old" one
+  }
+  installed = true;
+
   sigemptyset(&g_sigaction.sa_mask);
   g_sigaction.sa_sigaction = scripting_signal_handler;
   g_sigaction.sa_flags = SA_SIGINFO;

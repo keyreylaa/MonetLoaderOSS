@@ -159,6 +159,14 @@ bool isCharInCar(int self, int vehicle)
   cond_result = game::scripting::CallCommandById(0x00DB, self, vehicle);
   return bool(cond_result);
 }
+// The name the scripts of the desktop moonloader use: is the ped in a
+// vehicle at all.
+bool isCharInVehicle(int self)
+{
+  int handle = 0;
+  game::scripting::CallCommandById(0x00D9, self, &handle);
+  return handle != 0;
+}
 bool isCharInModel(int self, int modelId)
 {
   bool cond_result;
@@ -7232,6 +7240,8 @@ void reg(sol::state& s)
   s.set_function("isPointOnScreen", isPointOnScreen);
   s.set_function("storeCarCharIsIn", storeCarCharIsIn);
   s.set_function("isCharInCar", isCharInCar);
+  // the name the scripts of the desktop moonloader use
+  s.set_function("isCharInVehicle", isCharInVehicle);
   s.set_function("isCharInModel", isCharInModel);
   s.set_function("isCharInAnyCar", isCharInAnyCar);
   s.set_function("isButtonPressed", isButtonPressed);
@@ -7608,6 +7618,8 @@ void reg(sol::state& s)
   s.set_function("setCharSuffersCriticalHits", setCharSuffersCriticalHits);
   s.set_function("isCharSittingInCar", isCharSittingInCar);
   s.set_function("isCharSittingInAnyCar", isCharSittingInAnyCar);
+  // the name the scripts of the desktop moonloader use
+  s.set_function("isCharSitting", isCharSittingInAnyCar);
   s.set_function("isCharOnFoot", isCharOnFoot);
   s.set_function("setObjectRotation", setObjectRotation);
   s.set_function("getDebugCameraCoordinates", getDebugCameraCoordinates);

@@ -224,29 +224,46 @@ function mimgui.SwitchContext()
 end
 
 function mimgui.CreateTextureFromFile(path)
+    if not renderer then
+        -- The renderer is made on the second frame. A script that loads an
+        -- image while it starts runs into this, so the reason is told
+        -- instead of "attempt to index upvalue 'renderer'".
+        error("mimgui: the renderer is not ready yet. Load the image after the first frame (in an imgui.OnFrame callback or after imgui.IsInitialized() returns true).")
+    end
+
     local tex = renderer:CreateTextureFromFile(path)
-    if tex == nil then
+    -- A failed load is handed over as a NULL light user data, which is not
+    -- nil in Lua. Returning it would let a script draw a NULL texture, and
+    -- the draw list would hand the NULL to the renderer.
+    if tex == nil or tonumber(ffi.cast('uintptr_t', ffi.cast('void*', tex))) == 0 then
         return nil
     end
 
-    -- https://sol2.readthedocs.io/en/latest/api/usertype_memory.html
-    local texid = ffi.cast('ImTextureID*', tex)[0]
-    return ffi.gc(texid, function(t)
-        renderer:ReleaseTexture(tonumber(ffi.cast('uintptr_t', ffi.cast('void*', t))))
-    end)
+    -- The renderer hands the texture over as a light user data that already
+    -- holds the texture id. Casting it to a pointer and reading the first
+    -- word of it would take the parent field of the raster instead, which
+    -- is empty on this client: the image would never be drawn.
+    --
+    -- The texture is not released automatically. The draw list of the frame
+    -- still points at it when the garbage collector runs, and freeing it
+    -- there crashes the game. A script that wants the memory back calls
+    -- mimgui.ReleaseTexture.
+    return ffi.cast('ImTextureID', tex)
 end
 
 function mimgui.CreateTextureFromFileInMemory(src, size)
+    if not renderer then
+        error("mimgui: the renderer is not ready yet. Load the image after the first frame (in an imgui.OnFrame callback or after imgui.IsInitialized() returns true).")
+    end
+
     local tex = renderer:CreateTextureFromFileInMemory(tonumber(ffi.cast('uintptr_t', ffi.cast('void*', src))), size)
-    if tex == nil then
+    -- Same as above: a failed load is a NULL light user data, not nil.
+    if tex == nil or tonumber(ffi.cast('uintptr_t', ffi.cast('void*', tex))) == 0 then
         return nil
     end
 
-    -- https://sol2.readthedocs.io/en/latest/api/usertype_memory.html
-    local texid = ffi.cast('ImTextureID*', tex)[0]
-    return ffi.gc(texid, function(t)
-        renderer:ReleaseTexture(tonumber(ffi.cast('uintptr_t', ffi.cast('void*', t))))
-    end)
+    -- Same as above: the value of the light user data is the texture id.
+    return ffi.cast('ImTextureID', tex)
 end
 
 function mimgui.ReleaseTexture(tex)

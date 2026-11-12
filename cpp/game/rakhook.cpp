@@ -2,6 +2,7 @@
 #include "game/netinfo.h"
 #include "game/rakhook.h"
 #include "hook/monethook.h"
+#include "logger.h"
 #include "raknet/BitStream.h"
 #include "raknet/RakClientInterface.h"
 #include "raknet/RakNetTypes.h"
@@ -496,20 +497,46 @@ RakNet::Packet* h_rakpeer_receiveignorerpc(void* self)
 void rakhook::init(RakClientInterface* client, std::uintptr_t recv_ignore_rpc)
 {
   rci = client;
+
+  // A hook that could not be installed leaves its target untouched, so the
+  // loader would run with a half hooked network and nothing would say so.
+  // The interface is only reported as ready when all three hooks are in.
+  auto install = [](auto& target, const char* name) {
+    const auto result = target.apply();
+    if (result != monethook::detail::hook_result::success) {
+      logger::log<logger::LV_ERROR>(nullptr, "RakNet hook {} was not installed: {}",
+          name, static_cast<int>(result));
+      return false;
+    }
+    return true;
+  };
+
   o_rci_send = { reinterpret_cast<std::uintptr_t>(rci->vtbl->Send), h_rci_send };
-  o_rci_send.apply();
   o_rci_rpc = { reinterpret_cast<std::uintptr_t>(rci->vtbl->RPC), h_rci_rpc };
-  o_rci_rpc.apply();
   o_rakpeer_receiveignorerpc = { recv_ignore_rpc, h_rakpeer_receiveignorerpc };
-  o_rakpeer_receiveignorerpc.apply();
+
+  bool ready = install(o_rci_send, "Send");
+  ready = install(o_rci_rpc, "RPC") && ready;
+  ready = install(o_rakpeer_receiveignorerpc, "ReceiveIgnoreRPC") && ready;
 
   RakNet::StringCompressor::AddReference();
-  inited = true;
+  inited = ready;
+
+  if (ready) {
+    logger::log<logger::LV_SYSTEM>(nullptr, "{}", "the RakNet hooks are in place");
+  } else {
+    logger::log<logger::LV_ERROR>(nullptr, "{}", "the RakNet interface of the client was not hooked");
+  }
 }
 
 bool rakhook::available()
 {
   return inited;
+}
+
+void rakhook::set_client(RakClientInterface* client)
+{
+  rci = client;
 }
 
 void rakhook::process()

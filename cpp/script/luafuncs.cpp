@@ -204,7 +204,7 @@ void luafuncs::reg(sol::state& state)
   };
 
   // Handle -> ID stuff
-  state["sampGetCharHandleBySampPlayerId"] = [](std::uint16_t playerid) {
+  auto char_handle_by_player = [](std::uint16_t playerid) {
     CPed* ped = game::netinfo::find_ped(playerid);
     if (ped) {
       return std::tuple<bool, std::optional<int>>(true, CPools::GetPedPool()->GetRef(ped));
@@ -212,6 +212,9 @@ void luafuncs::reg(sol::state& state)
 
     return std::tuple<bool, std::optional<int>>(false, std::nullopt);
   };
+  state["sampGetCharHandleBySampPlayerId"] = char_handle_by_player;
+  // the name the scripts of the desktop moonloader use
+  state["getCharHandleBySampPlayerId"] = char_handle_by_player;
   state["sampGetCarHandleBySampVehicleId"] = [](std::uint16_t vehicleid) {
     CVehicle* veh = game::netinfo::find_car(vehicleid);
     if (veh) {

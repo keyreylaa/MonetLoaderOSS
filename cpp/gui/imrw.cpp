@@ -3,10 +3,12 @@
 #include "game/RenderWare.h"
 #include "imgui/imgui.h"
 #include "lib_manager.h"
+#include "logger.h"
 #include "stb_image.h"
 #include <cstddef>
 #include <cstdlib>
 #include <ctime>
+#include <string_view>
 #include <sys/time.h>
 
 namespace {
@@ -15,6 +17,32 @@ struct imrw_data {
   std::size_t vb_size { 2048 };
   double time { 0.f };
 };
+
+// stb_image has no webp reader at all, so a webp file is worth its own
+// message: "unknown image type" would not tell the user what is wrong.
+bool ends_with_webp(const char* file)
+{
+  if (!file) {
+    return false;
+  }
+  std::string_view path { file };
+  if (path.size() < 5) {
+    return false;
+  }
+  return path.substr(path.size() - 5) == ".webp";
+}
+
+// The texture id that the script gets is the value of the light user data,
+// which is the raster itself. The parent of the raster is written down as
+// well: an empty one is what a script sees as an image that never appears.
+void log_image(const char* file, int width, int height, ImTextureID raster)
+{
+  auto* r = static_cast<rw::RwRaster*>(raster);
+  logger::log<logger::LV_SYSTEM>(nullptr, "image '{}': {}x{} raster=0x{:x} parent=0x{:x}",
+      file, width, height,
+      reinterpret_cast<std::uintptr_t>(raster),
+      r ? reinterpret_cast<std::uintptr_t>(r->parent) : 0);
+}
 
 void set_scissor_rect(CRect& rect)
 {
@@ -92,6 +120,12 @@ void do_render(ImDrawData* draw_data)
     const ImDrawIdx* idx_buffer = cmd_list->IdxBuffer.Data;
     for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++) {
       const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+
+      // A texture id of NULL is never handed to the renderer: it would take
+      // it for a raster and dereference it.
+      if (!pcmd->TextureId) {
+        continue;
+      }
 
       if (pcmd->UserCallback) {
         pcmd->UserCallback(cmd_list, pcmd);
@@ -283,10 +317,25 @@ imrw::image_data imrw::load_image(const char* file)
   int iw, ih, in;
   stbi_uc* pxs = stbi_load(file, &iw, &ih, &in, 4);
   if (!pxs) {
+    // The image decoder of the loader is stb_image. It reads jpg, png, gif,
+    // bmp, tga, psd, hdr, pnm and pic, but not webp at all.
+    if (ends_with_webp(file)) {
+      logger::log<logger::LV_ERROR>(nullptr,
+          "image '{}' was not loaded: webp is not supported by the image decoder", file);
+    } else {
+      logger::log<logger::LV_ERROR>(nullptr, "image '{}' was not loaded: {}",
+          file, stbi_failure_reason() ? stbi_failure_reason() : "unknown reason");
+    }
     return { nullptr, 0, 0 };
   }
 
-  return create_image_from_rgba8888(pxs, iw, ih);
+  auto image = create_image_from_rgba8888(pxs, iw, ih);
+  if (!image.raster) {
+    logger::log<logger::LV_ERROR>(nullptr, "image '{}' could not be turned into a texture", file);
+    return image;
+  }
+  log_image(file, iw, ih, image.raster);
+  return image;
 }
 
 imrw::image_data imrw::load_image_from_memory(const unsigned char* data, int length)
@@ -294,10 +343,18 @@ imrw::image_data imrw::load_image_from_memory(const unsigned char* data, int len
   int iw, ih, in;
   stbi_uc* pxs = stbi_load_from_memory(data, length, &iw, &ih, &in, 4);
   if (!pxs) {
+    logger::log<logger::LV_ERROR>(nullptr, "image in memory was not loaded: {}",
+        stbi_failure_reason() ? stbi_failure_reason() : "unknown reason");
     return { nullptr, 0, 0 };
   }
 
-  return create_image_from_rgba8888(pxs, iw, ih);
+  auto image = create_image_from_rgba8888(pxs, iw, ih);
+  if (!image.raster) {
+    logger::log<logger::LV_ERROR>(nullptr, "the image in memory could not be turned into a texture");
+    return image;
+  }
+  log_image("<memory>", iw, ih, image.raster);
+  return image;
 }
 
 imrw::image_data imrw::get_image_data(ImTextureID raster_)

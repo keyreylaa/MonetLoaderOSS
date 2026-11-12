@@ -24,6 +24,7 @@
 #include <dlfcn.h>
 #include <jni.h>
 #include <spdlog/spdlog.h>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -166,11 +167,11 @@ void process_touch()
 
   for (auto& i : g_touch_queue) {
     if (!on_touch(i.type, i.num, i.x, i.y)) {
-      using and_touchevent_t = void (*)(int, int, int, int);
+      // Without a hook there is no way to reach the game. The address of
+      // the raw entry point is zero in that case, and calling it kills the
+      // process. The host of the loader passes the touch on itself.
       if (o_and_touchevent.applied())
         o_and_touchevent(i.type, i.num, i.x, i.y);
-      else
-        (*reinterpret_cast<and_touchevent_t*>(lib_manager::got_and_touchevent))(i.type, i.num, i.x, i.y);
     }
   }
 
@@ -185,6 +186,22 @@ monethook::plt_hook<void()> o_cgame_process;
 void h_cgame_process()
 {
   g_had_run_lua = false;
+  if (!lua::script_manager::initialized()) {
+    // The upstream starts the scripts from the CTheScripts::Process hook, but
+    // this game never calls it. The game loop always runs, so it is used here.
+    static bool tried = false;
+    if (!tried) {
+      tried = true;
+      logger::log<logger::LV_SYSTEM>(nullptr, "{}", "starting the script manager from the game loop");
+      try {
+        game::scripting::InitSafeProcessing();
+        lua::script_manager::init();
+        g_game_restarted = false;
+      } catch (const std::exception& e) {
+        logger::log<logger::LV_ERROR>(nullptr, "could not start the script manager: {}", e.what());
+      }
+    }
+  }
   process_touch();
   game::audiostream_sync::process();
   rakhook::process(); // Safe to call even before RakHook is initialized since it only checks queue which is filled after init
@@ -288,12 +305,37 @@ void* h_netgame_ctor(char* self, const char* address, int port, const char* nick
 }
 #endif
 
+// ------ Hooks ------
+// A hook whose target was not found is skipped without a word by the
+// hooking library. The scripts are only loaded from one of these hooks, so
+// a missing one means that no script ever runs and nothing is logged. Every
+// hook is written down here, so that is visible.
+const char* hook_result_name(monethook::detail::hook_result result)
+{
+  switch (result)
+  {
+    case monethook::detail::hook_result::hook_is_dummy: return "no target";
+    case monethook::detail::hook_result::already_hooked: return "already hooked";
+    case monethook::detail::hook_result::not_hooked: return "not hooked";
+    case monethook::detail::hook_result::backend_error: return "backend error";
+    case monethook::detail::hook_result::success: return "ok";
+  }
+  return "unknown";
+}
+
+void log_hook(const char* name, std::uintptr_t address, monethook::detail::hook_result result)
+{
+  logger::log<logger::LV_SYSTEM>(nullptr, "hook {} at 0x{:x}: {}", name, address, hook_result_name(result));
+}
+
 // ------ Init ------
 void do_init()
 {
   void* handle = dlopen(compat::gtasa_name.c_str(), RTLD_LAZY);
   monethook::plt_scanner scanner { lib_manager::gtasa_base, lib_manager::gtasa_path.c_str() };
   if (!scanner.ok()) {
+    logger::log<logger::LV_ERROR, false>(nullptr,
+        "no game library at {}", lib_manager::gtasa_path.c_str());
     dlclose(handle);
     return;
   }
@@ -362,20 +404,20 @@ void do_init()
 
   // ------ Hooking ------
   o_cgame_process = { cgame_process, h_cgame_process };
-  o_cgame_process.apply();
+  log_hook("CGame::Process", cgame_process, o_cgame_process.apply());
   o_cthescripts_init = { cthescripts_init, h_cthescripts_init };
-  o_cthescripts_init.apply();
+  log_hook("CTheScripts::Init", cthescripts_init, o_cthescripts_init.apply());
   o_cthescripts_process = { cthescripts_process, h_cthescripts_process };
-  o_cthescripts_process.apply();
+  log_hook("CTheScripts::Process", cthescripts_process, o_cthescripts_process.apply());
   o_cgame_shutdown = { cgame_shutdown, h_cgame_shutdown };
-  o_cgame_shutdown.apply();
+  log_hook("CGame::Shutdown", cgame_shutdown, o_cgame_shutdown.apply());
   o_chid_flushqueuedtext = { chid_flushqueuedtext, h_chid_flushqueuedtext };
-  o_chid_flushqueuedtext.apply();
+  log_hook("CHID::FlushQueuedText", chid_flushqueuedtext, o_chid_flushqueuedtext.apply());
   o_opengl_cameraendupdate = { opengl_cameraendupdate, h_opengl_cameraendupdate };
-  o_opengl_cameraendupdate.apply();
+  log_hook("RwOpenGLCameraEndUpdate", opengl_cameraendupdate, o_opengl_cameraendupdate.apply());
 #if SAMP_MODE == 0
   o_and_touchevent = { lib_manager::got_and_touchevent, h_and_touchevent };
-  o_and_touchevent.apply();
+  log_hook("AND_TouchEvent", lib_manager::got_and_touchevent, o_and_touchevent.apply());
 #endif
 
 #if SAMP_MODE >= 1
@@ -398,20 +440,20 @@ void do_init()
 #endif
 
     o_crunningscript_process = { crunningscript_process, h_crunningscript_process };
-    o_crunningscript_process.apply();
+    log_hook("CRunningScript::Process", crunningscript_process, o_crunningscript_process.apply());
     o_cworld_add = { cworld_add, h_cworld_add };
-    o_cworld_add.apply();
+    log_hook("CWorld::Add", cworld_add, o_cworld_add.apply());
     o_cworld_remove = { cworld_remove, h_cworld_remove };
-    o_cworld_remove.apply();
+    log_hook("CWorld::Remove", cworld_remove, o_cworld_remove.apply());
     o_netgame_ctor = { scan_netgame.second, h_netgame_ctor };
-    o_netgame_ctor.apply();
+    log_hook("CNetGame::Constructor", scan_netgame.second, o_netgame_ctor.apply());
 
     if (compat::use_samp_touch_workaround) {
       o_nveventinsertnewest = { lib_manager::gtasa_base + (compat::nveventinsertnewest_offset | 1), h_nveventinsertnewest };
-      o_nveventinsertnewest.apply();
+      log_hook("NvEventInsertNewest", lib_manager::gtasa_base + (compat::nveventinsertnewest_offset | 1), o_nveventinsertnewest.apply());
     } else {
       o_and_touchevent = { lib_manager::got_and_touchevent, h_and_touchevent };
-      o_and_touchevent.apply();
+      log_hook("AND_TouchEvent", lib_manager::got_and_touchevent, o_and_touchevent.apply());
     }
 
     lib_manager::samp_receive_ignore = scan_raknet.second;
@@ -423,7 +465,7 @@ void do_init()
     lib_manager::samp_base = 0;
 
     o_and_touchevent = { lib_manager::got_and_touchevent, h_and_touchevent };
-    o_and_touchevent.apply();
+    log_hook("AND_TouchEvent", lib_manager::got_and_touchevent, o_and_touchevent.apply());
 #endif
   }
 #endif
@@ -487,6 +529,8 @@ void init_thread()
   while (!check_libs_loaded()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
+  logger::log<logger::LV_SYSTEM>(nullptr, "game library: {} at 0x{:x}",
+      lib_manager::gtasa_path.c_str(), lib_manager::gtasa_base);
   do_init();
 }
 
@@ -498,11 +542,44 @@ void do_preinit()
   logger::init();
   compat::init();
 
-  if (!check_libs_loaded())
+  if (!check_libs_loaded()) {
+    logger::log<logger::LV_SYSTEM>(nullptr, "waiting for the game library");
     std::thread { init_thread }.detach(); // Do async loading
-  else
+  } else {
     do_init(); // Do sync loading
+  }
 }
+}
+
+// ------ Host bridge ------
+// The SAMP client of this app is the app itself. The loader therefore
+// cannot hook into a foreign SA-MP library, and it never sees the touches
+// that come from Java. The client calls these two functions instead.
+extern "C" __attribute__((visibility("default"))) void monetloader_attach_samp(void* rak_client, void* receive_ignore_rpc)
+{
+  if (!rak_client) {
+    return;
+  }
+
+  auto* client = reinterpret_cast<RakClientInterface*>(rak_client);
+  if (rakhook::available()) {
+    // The client made a new interface for the new connection. The hooks
+    // are still in place, only the interface has to be replaced.
+    rakhook::set_client(client);
+    return;
+  }
+
+  logger::log<logger::LV_SYSTEM>(nullptr, "{}", "the client handed over its RakNet interface");
+  rakhook::init(client, reinterpret_cast<std::uintptr_t>(receive_ignore_rpc));
+}
+
+extern "C" __attribute__((visibility("default"))) void monetloader_touch(int type, int num, int x, int y)
+{
+  if (!lua::script_manager::initialized()) {
+    return;
+  }
+
+  submit_touch(type == 4 ? touch_handler::touch_type::POP : type, num, x, y);
 }
 
 extern "C" JNIEXPORT JNICALL jint JNI_OnLoad(JavaVM* vm, void* reserved)

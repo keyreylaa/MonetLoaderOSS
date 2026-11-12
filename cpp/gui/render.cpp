@@ -7,6 +7,7 @@
 #include "imrw.h"
 #include "input_system.h"
 #include "keyboard.h"
+#include "logger.h"
 #include "screen.h"
 #include "touch_handler.h"
 #include "utils/android.h"
@@ -179,7 +180,12 @@ float gui::render::get_dpi_scale()
 
 void gui::render::init()
 {
+  // The scale comes from the density of the display alone. A scale that
+  // followed the resolution of the game as well was tried and made the ui
+  // too big on a screen with many pixels.
   g_dpi_scale = std::max(1.f, andutils::jni::get_dpi() / 200.f);
+
+  logger::log<logger::LV_SYSTEM>(nullptr, "ui scale: {}", g_dpi_scale);
 
   g_render_context = ImGui::CreateContext();
   {

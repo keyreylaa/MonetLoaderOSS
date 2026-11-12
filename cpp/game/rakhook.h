@@ -9,6 +9,9 @@ namespace rakhook {
 void init(RakClientInterface* rci, std::uintptr_t recv_ignore_rpc);
 bool available();
 void process();
+// The client of this app creates a new interface on every connection. The
+// hooks stay where they are, only the interface has to be replaced.
+void set_client(RakClientInterface* rci);
 
 namespace emu {
   void clear();

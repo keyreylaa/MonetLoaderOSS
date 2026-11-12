@@ -15,6 +15,7 @@
 #include "game/common.h"
 #include "game/customgxt.h"
 #include "game/netinfo.h"
+#include "game/rakhook.h"
 #include "gui/render.h"
 #include "lib_manager.h"
 #include "logger.h"
@@ -278,11 +279,15 @@ void lua::script_manager::load_all()
 
   std::string ext_lua { ".lua" };
   std::string ext_luac { ".luac" };
+  std::size_t found = 0;
   for (auto& i : std::filesystem::directory_iterator(path)) {
     if (i.is_regular_file() && (i.path().extension() == ext_lua || i.path().extension() == ext_luac)) {
       load(i.path());
+      ++found;
     }
   }
+
+  logger::log<logger::LV_SYSTEM>(nullptr, "{} scripts in {}", found, path.string());
 
   run_queued_actions();
 }
@@ -314,6 +319,18 @@ void lua::script_manager::run(bool in_pause)
       if (o.has_value()) {
         it->second.dying = true;
         logger::log<logger::LV_ERROR>(&it->second, "{}", o->what());
+        // A script that died with an error. The scripts that watch the other
+        // ones need to know it, they have no other way to see it.
+        for_each_event_handler(
+            "onScriptCrashed",
+            [&it, &o](sol::protected_function fn) -> std::optional<sol::error> {
+              auto pfr = fn(it->second.info, o->what());
+              if (!pfr.valid()) {
+                sol::error e = pfr;
+                return e;
+              }
+              return std::nullopt;
+            });
         it = destroy_script(it, destroy_script_type::error);
       } else if (it->second.event_handlers.size() == 0 && it->second.sched.pending_tasks() == 0) {
         it = destroy_script(it, destroy_script_type::normal);
@@ -936,10 +953,13 @@ void lua::script_manager::register_opcode_extensions(script& s)
     return true;
   };
   state["isSampfuncsLoaded"] = []() {
-    return lib_manager::samp_base != 0;
+    // The loader brings the sampfuncs itself, they are in every script.
+    return true;
   };
   state["isSampLoaded"] = []() {
-    return lib_manager::samp_base != 0;
+    // This client is the samp client, there is no libsamp.so of another
+    // client to find. The RakNet hooks say that the client is there.
+    return lib_manager::samp_base != 0 || rakhook::available();
   };
 
   state["getCharQuaternion"] = [](int self) {

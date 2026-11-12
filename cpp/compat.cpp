@@ -48,6 +48,10 @@ void compat::init()
   // set default profile
 
   rapidjson::Document doc {};
+  // The document has to be an object before anything is written into it.
+  // A null document silently drops every member, which left the loader
+  // without a profile and killed the process on the first use of it.
+  doc.SetObject();
   set_default_profile(doc);
 
   // try to load user profile
@@ -111,6 +115,9 @@ void compat::init()
       || !doc.HasMember(s_nveventinsertnewest_offset) || !doc[s_nveventinsertnewest_offset].IsNumber()) {
     logger::log<logger::LV_ERROR, false>(nullptr,
         "{}", "invalid compat profile, using default");
+    // A profile that could not be parsed leaves the document empty, so it
+    // has to be an object again before the defaults are written into it.
+    doc.SetObject();
     set_default_profile(doc);
   }
 
