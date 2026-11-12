@@ -582,6 +582,14 @@ extern "C" __attribute__((visibility("default"))) void monetloader_touch(int typ
   submit_touch(type == 4 ? touch_handler::touch_type::POP : type, num, x, y);
 }
 
+// The name of the script that runs at the moment. The client prints it when
+// the process dies, because a crash inside a script leaves no line in the
+// log of the loader and the backtrace alone does not name the script.
+extern "C" __attribute__((visibility("default"))) const char* monetloader_current_script()
+{
+  return lua::script_manager::running();
+}
+
 extern "C" JNIEXPORT JNICALL jint JNI_OnLoad(JavaVM* vm, void* reserved)
 {
   JNIEnv* env;

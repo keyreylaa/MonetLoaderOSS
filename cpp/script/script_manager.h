@@ -13,6 +13,19 @@ class script_manager {
   static void run_queued_actions(); // needs to be run after exiting all lua contexts
   static void on_game_restart();
 
+  // The script that runs at the moment. A crash inside a script kills the
+  // process, so the client prints this name next to the backtrace: without
+  // it the trace only says that a script was running and not which one.
+  static void set_running(const std::string& name)
+  {
+    _running = name;
+  }
+
+  static const char* running()
+  {
+    return _running.empty() ? nullptr : _running.c_str();
+  }
+
   static bool initialized()
   {
     return _initialized;
@@ -31,6 +44,8 @@ class script_manager {
           ++it;
           continue;
         }
+
+        _running = it->second.info.name;
 
         for (auto i : it_2->second) {
           std::optional<sol::error> e = fn(i);
@@ -185,6 +200,7 @@ class script_manager {
   static inline bool _initialized { false };
   static inline std::size_t _next_script_id { 1 };
   static inline std::unordered_map<std::string, std::size_t> _loaded_paths {};
+  static inline std::string _running {};
   static inline std::filesystem::path _root_path {};
 
   struct script_action {

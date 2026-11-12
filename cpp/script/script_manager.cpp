@@ -302,6 +302,7 @@ void lua::script_manager::run(bool in_pause)
   if (_reload_all_later) {
     for (auto it = _scripts.begin(); it != _scripts.end();) {
       if (it->second.flags & script_flags::forced_reloading_only) {
+        _running = it->second.info.name;
         it->second.sched.run(in_pause);
         ++it;
       } else {
@@ -315,6 +316,7 @@ void lua::script_manager::run(bool in_pause)
     _reload_all_later = false;
   } else {
     for (auto it = _scripts.begin(); it != _scripts.end();) {
+      _running = it->second.info.name;
       auto o = it->second.sched.run(in_pause);
       if (o.has_value()) {
         it->second.dying = true;
