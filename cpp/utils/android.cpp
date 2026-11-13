@@ -6,21 +6,56 @@
 #include <filesystem>
 #include <fstream>
 #include <jni.h>
+#include <spdlog/spdlog.h>
 
 #ifdef NEW_INPUT_SYSTEM
 #include "InputSystem.dex.inl"
 #endif
 
 namespace {
+std::string jni_get_string(JNIEnv* env, jstring str);
+
 // A pending Java exception stays in the JNIEnv of the calling thread and
 // aborts the process at the next JNI call, which is usually somewhere
-// completely unrelated to the code that caused it. The clipboard is guarded
-// by the system and can refuse a read or a write, so drop the exception
-// instead of carrying it into the game loop.
-void clear_pending_exception(JNIEnv* env)
+// completely unrelated to the code that caused it. Log where it was noticed,
+// then drop it, so one refused call cannot kill the game. Repeats are
+// collapsed: a broken call runs every frame and would flood the log.
+void clear_pending_exception(JNIEnv* env, const char* where)
 {
-  if (env->ExceptionCheck()) {
-    env->ExceptionClear();
+  if (!env->ExceptionCheck()) {
+    return;
+  }
+
+  jthrowable throwable = env->ExceptionOccurred();
+  env->ExceptionClear();
+
+  std::string line = "unknown";
+
+  if (throwable != nullptr) {
+    // Log.getStackTraceString gives the type, the message and every Java frame
+    // in one call, which is what names the code that actually threw.
+    jclass c_log = env->FindClass("android/util/Log");
+    jmethodID m_stack = env->GetStaticMethodID(c_log, "getStackTraceString",
+        "(Ljava/lang/Throwable;)Ljava/lang/String;");
+    auto s_stack = static_cast<jstring>(
+        env->CallStaticObjectMethod(c_log, m_stack, throwable));
+    line = jni_get_string(env, s_stack);
+
+    env->DeleteLocalRef(s_stack);
+    env->DeleteLocalRef(c_log);
+    env->DeleteLocalRef(throwable);
+  }
+
+  static std::string last;
+  static int repeats {};
+
+  if (line != last) {
+    last = line;
+    repeats = 0;
+  }
+
+  if (repeats++ % 60 == 0) {
+    spdlog::error("java exception pending at {}:\n{}", where, line);
   }
 }
 
@@ -283,7 +318,7 @@ std::string andutils::jni::get_clipboard(JNIEnv* env)
   env->DeleteLocalRef(c_clip_data);
 
   if (env->ExceptionCheck()) {
-    clear_pending_exception(env);
+    clear_pending_exception(env, "ClipData.getItemAt");
     clip_item = nullptr;
   }
   if (!clip_item) {
@@ -297,7 +332,7 @@ std::string andutils::jni::get_clipboard(JNIEnv* env)
   jobject text_char_sequence = env->CallObjectMethod(clip_item, m_coerce_to_text, g_context);
   env->DeleteLocalRef(clip_item);
   env->DeleteLocalRef(c_clip_item);
-  clear_pending_exception(env);
+  clear_pending_exception(env, "ClipData.Item.coerceToText");
   if (!text_char_sequence) {
     return "";
   }
@@ -309,7 +344,7 @@ std::string andutils::jni::get_clipboard(JNIEnv* env)
   auto text = static_cast<jstring>(env->CallObjectMethod(text_char_sequence, m_to_string));
   env->DeleteLocalRef(text_char_sequence);
   env->DeleteLocalRef(c_char_sequence);
-  clear_pending_exception(env);
+  clear_pending_exception(env, "CharSequence.toString");
 
   // convert to std::string
   std::string result = jni_get_string(env, text);
@@ -324,11 +359,11 @@ void andutils::jni::set_clipboard(JNIEnv* env, const char* value)
       "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;");
   jstring label = env->NewStringUTF("default");
   jstring text = env->NewStringUTF(value);
-  clear_pending_exception(env);
+  clear_pending_exception(env, "set_clipboard: NewStringUTF");
   jobject clip = env->CallStaticObjectMethod(g_clip_data_class, m_new_plaintext, label, text);
   env->DeleteLocalRef(label);
   env->DeleteLocalRef(text);
-  clear_pending_exception(env);
+  clear_pending_exception(env, "ClipData.newPlainText");
 
   // setPrimaryClip(...)
   jclass c_clipboard_manager = env->GetObjectClass(g_clipboard_manager);
@@ -337,37 +372,49 @@ void andutils::jni::set_clipboard(JNIEnv* env, const char* value)
   env->CallVoidMethod(g_clipboard_manager, m_set_primary_clip, clip);
   env->DeleteLocalRef(clip);
   env->DeleteLocalRef(c_clipboard_manager);
-  clear_pending_exception(env);
+  clear_pending_exception(env, "ClipboardManager.setPrimaryClip");
 }
 
 #ifdef NEW_INPUT_SYSTEM
+// The input system is the only thing this library calls on the game thread
+// while the game runs, so a Java exception left behind by anybody else lands
+// here first. Check before every call: a pending exception turns the call
+// itself into an abort.
 void andutils::jni::input_init(JNIEnv* env)
 {
+  clear_pending_exception(env, "input_init");
   jmethodID m_init = env->GetStaticMethodID(g_input_system, "init", "()V");
   env->CallStaticVoidMethod(g_input_system, m_init);
+  clear_pending_exception(env, "InputSystem.init");
 }
 
 void andutils::jni::input_start(JNIEnv* env, const char* text, bool multiline, jint cursor)
 {
+  clear_pending_exception(env, "input_start");
   static jmethodID m_start_input = env->GetStaticMethodID(g_input_system,
       "startInput", "(Ljava/lang/String;ZI)V");
 
   jstring s_text = env->NewStringUTF(text);
+  clear_pending_exception(env, "input_start: NewStringUTF");
   env->CallStaticVoidMethod(g_input_system, m_start_input,
       s_text, static_cast<jboolean>(multiline), cursor);
   env->DeleteLocalRef(s_text);
+  clear_pending_exception(env, "InputSystem.startInput");
 }
 
 void andutils::jni::input_end(JNIEnv* env)
 {
+  clear_pending_exception(env, "input_end");
   static jmethodID m_end_input = env->GetStaticMethodID(g_input_system,
       "endInput", "(I)V");
 
   env->CallStaticVoidMethod(g_input_system, m_end_input, static_cast<jint>(INPUT_DEACTIVATED));
+  clear_pending_exception(env, "InputSystem.endInput");
 }
 
 andutils::jni::InputStatus andutils::jni::input_status(JNIEnv* env)
 {
+  clear_pending_exception(env, "input_status");
   static jmethodID m_get_status = env->GetStaticMethodID(g_input_system,
       "getStatus", "()I");
 
@@ -376,20 +423,25 @@ andutils::jni::InputStatus andutils::jni::input_status(JNIEnv* env)
 
 void andutils::jni::input_set_text(JNIEnv* env, const char* text)
 {
+  clear_pending_exception(env, "input_set_text");
   static jmethodID m_set_text = env->GetStaticMethodID(g_input_system,
       "setText", "(Ljava/lang/String;)V");
 
   jstring s_text = env->NewStringUTF(text);
+  clear_pending_exception(env, "input_set_text: NewStringUTF");
   env->CallStaticVoidMethod(g_input_system, m_set_text, s_text);
   env->DeleteLocalRef(s_text);
+  clear_pending_exception(env, "InputSystem.setText");
 }
 
 std::string andutils::jni::input_get_text(JNIEnv* env)
 {
+  clear_pending_exception(env, "input_get_text");
   static jmethodID m_get_text = env->GetStaticMethodID(g_input_system,
       "getText", "()Ljava/lang/String;");
 
   auto s_text = static_cast<jstring>(env->CallStaticObjectMethod(g_input_system, m_get_text));
+  clear_pending_exception(env, "InputSystem.getText");
   std::string result = jni_get_string(env, s_text);
   env->DeleteLocalRef(s_text);
   return result;
@@ -397,18 +449,22 @@ std::string andutils::jni::input_get_text(JNIEnv* env)
 
 void andutils::jni::input_set_selection(JNIEnv* env, jint start, jint end)
 {
+  clear_pending_exception(env, "input_set_selection");
   static jmethodID m_set_selection = env->GetStaticMethodID(g_input_system,
       "setSelection", "(II)V");
 
-  return env->CallStaticVoidMethod(g_input_system, m_set_selection, start, end);
+  env->CallStaticVoidMethod(g_input_system, m_set_selection, start, end);
+  clear_pending_exception(env, "InputSystem.setSelection");
 }
 
 std::pair<int, int> andutils::jni::input_get_selection(JNIEnv* env)
 {
+  clear_pending_exception(env, "input_get_selection");
   static jmethodID m_get_selection = env->GetStaticMethodID(g_input_system,
       "getSelection", "()J");
 
   jlong packed_value = env->CallStaticLongMethod(g_input_system, m_get_selection);
+  clear_pending_exception(env, "InputSystem.getSelection");
 
   return { static_cast<int>(packed_value >> 32), static_cast<int>(packed_value) };
 }
