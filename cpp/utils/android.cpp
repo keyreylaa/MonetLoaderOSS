@@ -12,6 +12,18 @@
 #endif
 
 namespace {
+// A pending Java exception stays in the JNIEnv of the calling thread and
+// aborts the process at the next JNI call, which is usually somewhere
+// completely unrelated to the code that caused it. The clipboard is guarded
+// by the system and can refuse a read or a write, so drop the exception
+// instead of carrying it into the game loop.
+void clear_pending_exception(JNIEnv* env)
+{
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+  }
+}
+
 jobject g_context;
 jobject g_classloader;
 
@@ -271,7 +283,7 @@ std::string andutils::jni::get_clipboard(JNIEnv* env)
   env->DeleteLocalRef(c_clip_data);
 
   if (env->ExceptionCheck()) {
-    env->ExceptionClear();
+    clear_pending_exception(env);
     clip_item = nullptr;
   }
   if (!clip_item) {
@@ -285,6 +297,7 @@ std::string andutils::jni::get_clipboard(JNIEnv* env)
   jobject text_char_sequence = env->CallObjectMethod(clip_item, m_coerce_to_text, g_context);
   env->DeleteLocalRef(clip_item);
   env->DeleteLocalRef(c_clip_item);
+  clear_pending_exception(env);
   if (!text_char_sequence) {
     return "";
   }
@@ -296,6 +309,7 @@ std::string andutils::jni::get_clipboard(JNIEnv* env)
   auto text = static_cast<jstring>(env->CallObjectMethod(text_char_sequence, m_to_string));
   env->DeleteLocalRef(text_char_sequence);
   env->DeleteLocalRef(c_char_sequence);
+  clear_pending_exception(env);
 
   // convert to std::string
   std::string result = jni_get_string(env, text);
@@ -310,9 +324,11 @@ void andutils::jni::set_clipboard(JNIEnv* env, const char* value)
       "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;");
   jstring label = env->NewStringUTF("default");
   jstring text = env->NewStringUTF(value);
+  clear_pending_exception(env);
   jobject clip = env->CallStaticObjectMethod(g_clip_data_class, m_new_plaintext, label, text);
   env->DeleteLocalRef(label);
   env->DeleteLocalRef(text);
+  clear_pending_exception(env);
 
   // setPrimaryClip(...)
   jclass c_clipboard_manager = env->GetObjectClass(g_clipboard_manager);
@@ -321,6 +337,7 @@ void andutils::jni::set_clipboard(JNIEnv* env, const char* value)
   env->CallVoidMethod(g_clipboard_manager, m_set_primary_clip, clip);
   env->DeleteLocalRef(clip);
   env->DeleteLocalRef(c_clipboard_manager);
+  clear_pending_exception(env);
 }
 
 #ifdef NEW_INPUT_SYSTEM
