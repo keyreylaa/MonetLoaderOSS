@@ -69,6 +69,7 @@ namespace jni {
 
 #ifdef NEW_INPUT_SYSTEM
   void input_init(JNIEnv* env);
+  bool input_ready(JNIEnv* env);
   void input_start(JNIEnv* env, const char* text, bool multiline, jint cursor);
   void input_end(JNIEnv* env);
   InputStatus input_status(JNIEnv* env);

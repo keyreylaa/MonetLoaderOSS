@@ -3,6 +3,7 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
 #include "utils/android.h"
+#include <cstring>
 
 namespace {
 thread_local static JNIEnv* g_env {};
@@ -15,6 +16,8 @@ ImGuiInputTextFlags g_shown_keyboard_flags {};
 int g_last_sel_start {};
 int g_last_sel_end {};
 std::string g_last_text {};
+
+bool g_input_ready {};
 
 const char* remove_null(const char* s)
 {
@@ -51,6 +54,17 @@ void input_system::end_frame()
   }
 
   if (!g_shown_keyboard && input.ID == g.ActiveId && !(input.IMEExFlags & ImGuiInputTextFlags_ReadOnly)) {
+    // The java side writes the text into an edit text of its own, which is
+    // made on the ui thread. Without it the keyboard has nothing to work
+    // with, so the input waits for it.
+    if (!g_input_ready) {
+      andutils::jni::input_init(g_env);
+      g_input_ready = andutils::jni::input_ready(g_env);
+      if (!g_input_ready) {
+        return;
+      }
+    }
+
     const char* text = input.TextAIsValid ? remove_null(input.TextA.Data) : remove_null(input.InitialTextA.Data);
 
     andutils::jni::input_start(g_env,

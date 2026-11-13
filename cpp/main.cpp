@@ -193,6 +193,15 @@ void h_cgame_process()
     if (!tried) {
       tried = true;
       logger::log<logger::LV_SYSTEM>(nullptr, "{}", "starting the script manager from the game loop");
+#ifdef NEW_INPUT_SYSTEM
+      // The input system belongs here as well. CTheScripts::Process is an
+      // internal call of the game, so its hook never runs and the java side
+      // of the keyboard would stay asleep.
+      {
+        andutils::java_getter java { };
+        andutils::jni::input_init(java.env());
+      }
+#endif
       try {
         game::scripting::InitSafeProcessing();
         lua::script_manager::init();
@@ -231,13 +240,6 @@ void h_cthescripts_process()
 
   o_cthescripts_process();
   if (!once) {
-#ifdef NEW_INPUT_SYSTEM
-    {
-      andutils::java_getter java { };
-      andutils::jni::input_init(java.env());
-    }
-#endif
-
     game::scripting::InitSafeProcessing();
     lua::script_manager::init();
     g_game_restarted = false;

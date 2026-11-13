@@ -380,12 +380,60 @@ void andutils::jni::set_clipboard(JNIEnv* env, const char* value)
 // while the game runs, so a Java exception left behind by anybody else lands
 // here first. Check before every call: a pending exception turns the call
 // itself into an abort.
+
+// The java side needs an activity and a handler of its own. Both are made in
+// init(), and init() hands the work to the ui thread, where a missing
+// activity would kill the process. The activity is asked for first, so a
+// broken reflection is reported here instead of on the ui thread.
 void andutils::jni::input_init(JNIEnv* env)
 {
+  static bool started = false;
+  if (started) {
+    return;
+  }
+
   clear_pending_exception(env, "input_init");
+  jmethodID m_get_activity = env->GetStaticMethodID(g_input_system,
+      "getActivity", "()Landroid/app/Activity;");
+  auto activity = static_cast<jobject>(
+      env->CallStaticObjectMethod(g_input_system, m_get_activity));
+  clear_pending_exception(env, "InputSystem.getActivity");
+  if (!activity) {
+    return; // no activity yet, the caller comes back later
+  }
+  env->DeleteLocalRef(activity);
+
   jmethodID m_init = env->GetStaticMethodID(g_input_system, "init", "()V");
   env->CallStaticVoidMethod(g_input_system, m_init);
   clear_pending_exception(env, "InputSystem.init");
+  started = true;
+  spdlog::info("input system started");
+}
+
+// The text of the java side goes into an edit text that is made on the ui
+// thread, so it can be missing for a moment after init(). Without it the
+// keyboard has nothing to write into.
+bool andutils::jni::input_ready(JNIEnv* env)
+{
+  static jfieldID f_edit_text = nullptr;
+  static bool field_missing = false;
+
+  if (!f_edit_text && !field_missing) {
+    f_edit_text = env->GetStaticFieldID(g_input_system, "mEditText",
+        "LInputSystem$EditTextSelectable;");
+    clear_pending_exception(env, "InputSystem.mEditText");
+    if (!f_edit_text) {
+      field_missing = true;
+    }
+  }
+  if (!f_edit_text) {
+    return false;
+  }
+
+  auto edit_text = env->GetStaticObjectField(g_input_system, f_edit_text);
+  bool ready = edit_text != nullptr;
+  env->DeleteLocalRef(edit_text);
+  return ready;
 }
 
 void andutils::jni::input_start(JNIEnv* env, const char* text, bool multiline, jint cursor)
