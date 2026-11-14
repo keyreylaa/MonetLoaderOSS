@@ -22,6 +22,12 @@
 #include "luabass.h"
 #include "luafuncs.h"
 #include "luajson.h"
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <string>
+#include <utility>
+#include <vector>
 #include "modules/cjson/lua_cjson.h"
 #include "modules/effil/lua-module.h"
 #include "modules/lbase64.h"
@@ -292,6 +298,51 @@ void lua::script_manager::load_all()
   run_queued_actions();
 }
 
+void lua::script_manager::add_script_time(const std::string& name, double ms)
+{
+  auto& entry = _script_times[name];
+  entry.total_ms += ms;
+  ++entry.frames;
+}
+
+void lua::script_manager::log_script_times()
+{
+  const auto now = std::chrono::steady_clock::now();
+  if (_script_time_logged.time_since_epoch().count() == 0) {
+    _script_time_logged = now;
+    return;
+  }
+  if (now - _script_time_logged < std::chrono::seconds(3)) {
+    return;
+  }
+  _script_time_logged = now;
+
+  // The scripts that use the most time per frame, the worst one first.
+  std::vector<std::pair<std::string, double>> list;
+  for (const auto& [name, entry] : _script_times) {
+    if (entry.frames == 0) {
+      continue;
+    }
+    list.emplace_back(name, entry.total_ms / static_cast<double>(entry.frames));
+  }
+  _script_times.clear();
+
+  if (list.empty()) {
+    return;
+  }
+
+  std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) {
+    return a.second > b.second;
+  });
+
+  std::string line = "script time per frame (ms):";
+  const std::size_t count = std::min<std::size_t>(list.size(), 3);
+  for (std::size_t i = 0; i < count; ++i) {
+    line += " " + list[i].first + " " + std::to_string(static_cast<int>(std::round(list[i].second)));
+  }
+  logger::log<logger::LV_SYSTEM>(nullptr, "{}", line);
+}
+
 void lua::script_manager::run(bool in_pause)
 {
   // std::lock_guard<std::mutex> lock { _gil };
@@ -317,7 +368,11 @@ void lua::script_manager::run(bool in_pause)
   } else {
     for (auto it = _scripts.begin(); it != _scripts.end();) {
       _running = it->second.info.name;
+      const auto script_start = std::chrono::steady_clock::now();
       auto o = it->second.sched.run(in_pause);
+      const auto script_end = std::chrono::steady_clock::now();
+      add_script_time(it->second.info.name,
+          std::chrono::duration<double, std::milli>(script_end - script_start).count());
       if (o.has_value()) {
         it->second.dying = true;
         logger::log<logger::LV_ERROR>(&it->second, "{}", o->what());
@@ -345,6 +400,8 @@ void lua::script_manager::run(bool in_pause)
   run_queued_actions();
 
   gui::render::end_frame();
+
+  log_script_times();
 }
 
 void lua::script_manager::run_queued_actions()

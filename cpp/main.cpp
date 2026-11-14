@@ -575,6 +575,10 @@ extern "C" __attribute__((visibility("default"))) void monetloader_attach_samp(v
   rakhook::init(client, reinterpret_cast<std::uintptr_t>(receive_ignore_rpc));
 }
 
+// Hands a touch of the game to the user interface of the scripts.
+//
+// The queue is for the clients where the touch arrives on another thread:
+// there the touch cannot be handled in place, and it is replayed later.
 extern "C" __attribute__((visibility("default"))) void monetloader_touch(int type, int num, int x, int y)
 {
   if (!lua::script_manager::initialized()) {
@@ -582,6 +586,26 @@ extern "C" __attribute__((visibility("default"))) void monetloader_touch(int typ
   }
 
   submit_touch(type == 4 ? touch_handler::touch_type::POP : type, num, x, y);
+}
+
+// The same as monetloader_touch, but the touch is handled in place and the
+// answer tells the host whether the user interface of a script took it.
+//
+// The host calls this from the game thread, so the touch can be answered
+// right away. A touch that a script window uses (a window that is dragged,
+// for example) must not reach the game, or the character walks away while
+// the window is moved.
+//
+// The name is on its own on purpose: a host that knows this function uses
+// it, and a host with an older loader falls back to monetloader_touch. That
+// keeps an old loader from being called in a way it does not understand.
+extern "C" __attribute__((visibility("default"))) bool monetloader_touch_consumed(int type, int num, int x, int y)
+{
+  if (!lua::script_manager::initialized()) {
+    return false;
+  }
+
+  return on_touch(type == 4 ? touch_handler::touch_type::POP : type, num, x, y);
 }
 
 // The name of the script that runs at the moment. The client prints it when

@@ -1,6 +1,7 @@
 #pragma once
 #include "logger.h"
 #include "script.h"
+#include <chrono>
 #include <filesystem>
 #include <list>
 
@@ -192,6 +193,17 @@ class script_manager {
   };
   static script_map_type::iterator destroy_script(script_map_type::iterator siter, destroy_script_type type = destroy_script_type::normal);
 
+  // The time every script spends per frame. The log names the scripts that
+  // eat the frame time, so a slow script is found by measuring instead of
+  // guessing.
+  struct script_time {
+    double total_ms { 0.0 };
+    std::size_t frames { 0 };
+  };
+
+  static void add_script_time(const std::string& name, double ms);
+  static void log_script_times();
+
   static inline std::unordered_map<std::string, lua_CFunction> _modules {};
   static inline script_map_type _scripts {};
   // static inline std::mutex _gil {};
@@ -227,6 +239,9 @@ class script_manager {
     sol::protected_function callback;
   };
   static inline std::unordered_map<std::string, command_info> _commands {};
+
+  static inline std::unordered_map<std::string, script_time> _script_times {};
+  static inline std::chrono::steady_clock::time_point _script_time_logged {};
 
   friend struct script;
 };
