@@ -6,6 +6,17 @@
 
 #include "imgui/imgui_internal.h"
 
+namespace {
+// A script can draw a widget outside of a window, for example when it
+// forgets to call Begin. ImGui then reads a null window and the game dies
+// with SIGSEGV. The widget is skipped instead, the script keeps running.
+bool has_current_window()
+{
+    ImGuiContext* context = ImGui::GetCurrentContext();
+    return context != nullptr && ImGui::GetCurrentWindow() != nullptr;
+}
+} // namespace
+
 CIMGUI_API ImVec2* ImVec2_ImVec2(void)
 {
     return IM_NEW(ImVec2)();
@@ -124,8 +135,15 @@ CIMGUI_API bool igBegin(const char* name,bool* p_open,ImGuiWindowFlags flags)
 }
 CIMGUI_API void igEnd()
 {
+    // End without Begin pops an empty window stack and corrupts the context.
+    ImGuiContext* context = ImGui::GetCurrentContext();
+    if (context == nullptr || context->CurrentWindowStack.empty()) {
+        return;
+    }
+
     return ImGui::End();
 }
+
 CIMGUI_API bool igBeginChild(const char* str_id,const ImVec2 size,bool border,ImGuiWindowFlags flags)
 {
     return ImGui::BeginChild(str_id,size,border,flags);
@@ -400,10 +418,12 @@ CIMGUI_API void igPopButtonRepeat()
 }
 CIMGUI_API void igSeparator()
 {
+    if (!has_current_window()) { return; }
     return ImGui::Separator();
 }
 CIMGUI_API void igSameLine(float offset_from_start_x,float spacing)
 {
+    if (!has_current_window()) { return; }
     return ImGui::SameLine(offset_from_start_x,spacing);
 }
 CIMGUI_API void igNewLine()
@@ -524,10 +544,12 @@ CIMGUI_API ImGuiID igGetIDPtr(const void* ptr_id)
 }
 CIMGUI_API void igTextUnformatted(const char* text,const char* text_end)
 {
+    if (!has_current_window()) { return; }
     return ImGui::TextUnformatted(text,text_end);
 }
 CIMGUI_API void igText(const char* fmt,...)
 {
+    if (!has_current_window()) { return; }
     va_list args;
     va_start(args, fmt);
     ImGui::TextV(fmt,args);
@@ -535,10 +557,12 @@ CIMGUI_API void igText(const char* fmt,...)
 }
 CIMGUI_API void igTextV(const char* fmt,va_list args)
 {
+    if (!has_current_window()) { return; }
     return ImGui::TextV(fmt,args);
 }
 CIMGUI_API void igTextColored(const ImVec4 col,const char* fmt,...)
 {
+    if (!has_current_window()) { return; }
     va_list args;
     va_start(args, fmt);
     ImGui::TextColoredV(col,fmt,args);
@@ -546,10 +570,12 @@ CIMGUI_API void igTextColored(const ImVec4 col,const char* fmt,...)
 }
 CIMGUI_API void igTextColoredV(const ImVec4 col,const char* fmt,va_list args)
 {
+    if (!has_current_window()) { return; }
     return ImGui::TextColoredV(col,fmt,args);
 }
 CIMGUI_API void igTextDisabled(const char* fmt,...)
 {
+    if (!has_current_window()) { return; }
     va_list args;
     va_start(args, fmt);
     ImGui::TextDisabledV(fmt,args);
@@ -557,6 +583,7 @@ CIMGUI_API void igTextDisabled(const char* fmt,...)
 }
 CIMGUI_API void igTextDisabledV(const char* fmt,va_list args)
 {
+    if (!has_current_window()) { return; }
     return ImGui::TextDisabledV(fmt,args);
 }
 CIMGUI_API void igTextWrapped(const char* fmt,...)
@@ -583,6 +610,7 @@ CIMGUI_API void igLabelTextV(const char* label,const char* fmt,va_list args)
 }
 CIMGUI_API void igBulletText(const char* fmt,...)
 {
+    if (!has_current_window()) { return; }
     va_list args;
     va_start(args, fmt);
     ImGui::BulletTextV(fmt,args);
@@ -590,50 +618,62 @@ CIMGUI_API void igBulletText(const char* fmt,...)
 }
 CIMGUI_API void igBulletTextV(const char* fmt,va_list args)
 {
+    if (!has_current_window()) { return; }
     return ImGui::BulletTextV(fmt,args);
 }
 CIMGUI_API bool igButton(const char* label,const ImVec2 size)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::Button(label,size);
 }
 CIMGUI_API bool igSmallButton(const char* label)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::SmallButton(label);
 }
 CIMGUI_API bool igInvisibleButton(const char* str_id,const ImVec2 size)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::InvisibleButton(str_id,size);
 }
 CIMGUI_API bool igArrowButton(const char* str_id,ImGuiDir dir)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::ArrowButton(str_id,dir);
 }
 CIMGUI_API void igImage(ImTextureID user_texture_id,const ImVec2 size,const ImVec2 uv0,const ImVec2 uv1,const ImVec4 tint_col,const ImVec4 border_col)
 {
+    if (!has_current_window()) { return; }
     return ImGui::Image(user_texture_id,size,uv0,uv1,tint_col,border_col);
 }
 CIMGUI_API bool igImageButton(ImTextureID user_texture_id,const ImVec2 size,const ImVec2 uv0,const ImVec2 uv1,int frame_padding,const ImVec4 bg_col,const ImVec4 tint_col)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::ImageButton(user_texture_id,size,uv0,uv1,frame_padding,bg_col,tint_col);
 }
 CIMGUI_API bool igCheckbox(const char* label,bool* v)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::Checkbox(label,v);
 }
 CIMGUI_API bool igCheckboxFlags(const char* label,unsigned int* flags,unsigned int flags_value)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::CheckboxFlags(label,flags,flags_value);
 }
 CIMGUI_API bool igRadioButtonBool(const char* label,bool active)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::RadioButton(label,active);
 }
 CIMGUI_API bool igRadioButtonIntPtr(const char* label,int* v,int v_button)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::RadioButton(label,v,v_button);
 }
 CIMGUI_API void igProgressBar(float fraction,const ImVec2 size_arg,const char* overlay)
 {
+    if (!has_current_window()) { return; }
     return ImGui::ProgressBar(fraction,size_arg,overlay);
 }
 CIMGUI_API void igBullet()
@@ -710,6 +750,7 @@ CIMGUI_API bool igDragScalarN(const char* label,ImGuiDataType data_type,void* v,
 }
 CIMGUI_API bool igSliderFloat(const char* label,float* v,float v_min,float v_max,const char* format,float power)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::SliderFloat(label,v,v_min,v_max,format,power);
 }
 CIMGUI_API bool igSliderFloat2(const char* label,float v[2],float v_min,float v_max,const char* format,float power)
@@ -730,6 +771,7 @@ CIMGUI_API bool igSliderAngle(const char* label,float* v_rad,float v_degrees_min
 }
 CIMGUI_API bool igSliderInt(const char* label,int* v,int v_min,int v_max,const char* format)
 {
+    if (!has_current_window()) { return false; }
     return ImGui::SliderInt(label,v,v_min,v_max,format);
 }
 CIMGUI_API bool igSliderInt2(const char* label,int v[2],int v_min,int v_max,const char* format)
